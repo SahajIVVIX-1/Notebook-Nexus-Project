@@ -1,177 +1,124 @@
-PyEnv Launcher 📘
-<!-- It's highly recommended to replace this with an actual screenshot of your application -->
+<p align="center">
+  <img src="https://raw.githubusercontent.com/FortAwesome/Font-Awesome/6.x/svgs/solid/book-open-reader.svg" width="100" alt="logo">
+</p>
 
+<h1 align="center">📘 PyEnv Launcher</h1>
 
-A modern, cross-platform graphical user interface to simplify the management of Python virtual environments and project-specific tools like Jupyter Notebook.
+<p align="center">
+  <em>A modern GUI to simplify Python virtual environment and project management.</em>
+</p>
 
-PyEnv Launcher provides an intuitive interface to handle common tasks associated with Python project development, eliminating the need to memorize and type repetitive commands in the terminal. Manage your project directories, create environments, install packages, and launch tools all from one place.
+<p align="center">
+    <img src="https://img.shields.io/badge/Python-3.8+-blue?logo=python&logoColor=white" alt="Python Version">
+    <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License">
+    <img src="https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows&logoColor=white" alt="Platform">
+    <img src="https://img.shields.io/badge/PRs-Welcome-brightgreen.svg" alt="PRs Welcome">
+</p>
 
-✨ Key Features
+<p align="center">
+  <!-- 
+    IMPORTANT: REPLACE THIS GIF WITH A SCREENSHOT/GIF OF YOUR ACTUAL APPLICATION!
+    A good GIF is the best way to showcase your project.
+  -->
+  <img src="https://i.imgur.com/gYf2mJj.gif" alt="PyEnv Launcher Demo">
+</p>
 
-Project-Based Workflow: Center your work around a main project directory.
+> Forget memorizing `pip`, `venv`, and `jupyter` commands. PyEnv Launcher brings your entire project workflow—from environment creation to launching tools—into one clean, intuitive, and beautiful interface.
 
-Virtual Environment Management:
+---
 
-Discover: Automatically detects existing virtual environments (venvs) in your project folder.
+## ✨ Key Features
 
-Create: Quickly create new Python virtual environments.
+| Category                  | Feature                                                                                             |
+| ------------------------- | --------------------------------------------------------------------------------------------------- |
+| **🌐 Environment Mgmt**   | **Auto-Discover** existing venvs, **Create** new ones, and **Delete** them with a single click.         |
+| **📦 Package Mgmt**       | **Install dependencies** from `requirements.txt` or **Freeze** your current environment into a file.  |
+| **🚀 One-Click Launchers** | **Launch Jupyter Notebook** or **Activate a Terminal** directly in your selected environment's context. |
+| **📂 Integrated Explorer**| View your project's directory, open files, copy paths, and manage contents without leaving the app. |
+| **🎨 Modern UI/UX**       | Switch between **Dark & Light themes**, get real-time status updates, and view a detailed activity log. |
+| **⚙️ Smart & Robust**     | Remembers **recent paths**, provides global error handling, and runs processes in the background.    |
 
-Delete: Safely remove environments you no longer need.
+---
 
-Details: View Python version and other details of a selected environment.
+## 🚀 Getting Started (Installation)
 
-Package Management:
+Installing PyEnv Launcher is simple.
 
-Install from File: Easily install all packages from a requirements.txt file.
+1.  Navigate to the [**Releases Page**](https://github.com/your-username/pyenv-launcher/releases).
+2.  Download the latest `PyEnvLauncher-Setup.exe` file.
+3.  Run the installer. It will handle everything and add a shortcut to your Start Menu.
 
-Freeze: Generate a requirements.txt file from the packages installed in the selected environment.
+You can now search for `PyEnv Launcher` in the Start Menu and run it!
 
-One-Click Launchers:
+---
 
-Launch Jupyter: Start a Jupyter Notebook session within the context of your activated environment.
+## 🛠️ How to Use
 
-Activate Terminal: Open a new terminal/command prompt with the selected environment already activated, ready for your commands.
+1.  **📍 Select Project Directory**: Use the **`Select Directory`** button to choose your main project folder.
+2.  **🌿 Choose Environment**:
+    -   Create a new one by typing a name and clicking **`Create`**.
+    -   Or, select an existing one from the dropdown menu.
+3.  **📦 Manage Packages**:
+    -   Click **`Install from File`** to populate your venv from a `requirements.txt`.
+    -   Click **`Freeze to requirements.txt`** to save your package list.
+4.  **⚡ Launch Tools**:
+    -   Click **`Launch Jupyter`** to start a notebook server.
+    -   Click **`Activate`** to open a new terminal with the venv ready to go.
 
-Integrated File Explorer:
+---
 
-View and interact with the contents of your project directory.
+## 🧑‍💻 For Developers (Building from Source)
 
-Open files/folders, copy paths, or delete items directly from the UI.
+Want to run the latest version from source or contribute?
 
-Modern UI & UX:
+#### Prerequisites
+*   Python 3.8+
+*   Git
 
-Themes: Switch between beautiful Dark and Light themes.
+#### Setup
+1.  **Clone the repository:**
+    ```sh
+    git clone https://github.com/your-username/pyenv-launcher.git
+    cd pyenv-launcher
+    ```
 
-Real-time Updates: The UI automatically refreshes when files or folders change in your project directory.
+2.  **Create and activate a virtual environment:**
+    ```sh
+    # Windows
+    python -m venv .venv
+    .\.venv\Scripts\activate
+    ```
 
-Activity Log: See the output of all commands being run in the background.
+3.  **Install dependencies:**
+    ```sh
+    pip install PyQt6 watchdog
+    ```
 
-System Tray Integration: Minimize the app and see process status at a glance.
+4.  **Run the application:**
+    ```python
+    python your_script_name.py
+    ```
 
-Robust and User-Friendly:
+---
 
-Global error handling and logging to error_log.txt.
+### 🤝 Contributing
 
-Remembers recent project paths for quick access.
+Contributions are what make the open-source community such an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
 
-🚀 Installation (For End-Users)
+1.  Fork the Project
+2.  Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
+3.  Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
+4.  Push to the Branch (`git push origin feature/AmazingFeature`)
+5.  Open a Pull Request
 
-You can install PyEnv Launcher easily using the provided installer for Windows.
+### 📄 License
 
-Go to the Releases page of this repository.
+Distributed under the MIT License. See `LICENSE.md` for more information.
 
-Download the latest PyEnvLauncher-Setup.exe file.
+### 🙏 Acknowledgments
 
-Run the installer and follow the on-screen instructions. The application will be installed, and a shortcut will be added to your Start Menu.
+A special thank you to the developers and communities behind these incredible tools:
 
-That's it! You can now find and run "PyEnv Launcher" from your Start Menu.
-
-🛠️ How to Use
-
-Select Project Directory:
-
-On first launch, the application will default to your user home directory.
-
-Click "Select Directory" or paste a path into the input field to choose your project folder. Your recent paths are saved for quick access.
-
-Create or Select an Environment:
-
-To create a new one: Type a name (e.g., .venv, env) in the "Create New Environment" field and click "Create".
-
-To use an existing one: Select it from the "Manage Existing Environment" dropdown menu.
-
-Manage Packages:
-
-With an environment selected, click "Install from File" to choose a requirements.txt and install its contents.
-
-Click "Freeze to requirements.txt" to save the state of your current environment.
-
-Launch Tools:
-
-Click "Launch Jupyter" to start a Jupyter Notebook server.
-
-Click "Activate" to open a new command prompt with the environment ready to go.
-
-🧑‍💻 For Developers (Building from Source)
-
-If you want to run the application from the source code or contribute to its development, follow these steps.
-
-Prerequisites
-
-Python 3.8+
-
-Git
-
-Setup
-
-Clone the repository:
-
-Generated sh
-git clone https://github.com/your-username/pyenv-launcher.git
-cd pyenv-launcher
-
-
-Create and activate a virtual environment:
-
-Generated sh
-# On Windows
-python -m venv .venv
-.\.venv\Scripts\activate
-IGNORE_WHEN_COPYING_START
-content_copy
-download
-Use code with caution.
-Sh
-IGNORE_WHEN_COPYING_END
-
-Install the required packages:
-The application uses PyQt6 and Watchdog. Install them using pip:
-
-Generated sh
-pip install PyQt6 watchdog
-IGNORE_WHEN_COPYING_START
-content_copy
-download
-Use code with caution.
-Sh
-IGNORE_WHEN_COPYING_END
-
-Run the application:
-
-Generated sh
-python file.py  #<-- Replace with the actual name of your .py file
-IGNORE_WHEN_COPYING_START
-content_copy
-download
-Use code with caution.
-Sh
-IGNORE_WHEN_COPYING_END
-🔧 Configuration
-
-You can customize the application's theme and default project directory by clicking the Settings icon in the title bar. Settings are saved automatically and will persist between sessions.
-
-🤝 Contributing
-
-Contributions, issues, and feature requests are welcome! Feel free to check the issues page.
-
-Fork the Project
-
-Create your Feature Branch (git checkout -b feature/AmazingFeature)
-
-Commit your Changes (git commit -m 'Add some AmazingFeature')
-
-Push to the Branch (git push origin feature/AmazingFeature)
-
-Open a Pull Request
-
-📄 License
-
-This project is licensed under the MIT License - see the LICENSE.md file for details.
-
-🙏 Acknowledgments
-
-PyQt6 for the powerful GUI framework.
-
-Watchdog for file system monitoring.
-
-The Python community for creating the incredible tools that make this possible.
+*   [PyQt6](https://riverbankcomputing.com/software/pyqt/)
+*   [Watchdog](https://github.com/gorakhargosh/watchdog)
+*   [Shields.io](https://shields.io) for the cool badges.
