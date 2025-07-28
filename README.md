@@ -67,7 +67,7 @@ PyEnv Launcher is packed with features designed to enhance productivity and prov
 
 For users who prefer a ready-to-run application without setting up a Python environment, a standalone executable is available.
 
-To download it, please visit the **[Latest Release](link/to/your/releases)** page of this GitHub repository.
+To download it, please visit the **[Latest Release](https://github.com/SahajIVVIX-1/PyEnv-Launcher-Project/blob/initial/Softwer/PyEnvLauncher-Setup%20v59.2.exe)** page of this GitHub repository.
 
 Within the release notes for the latest version, you will find a direct download link to the compiled application hosted on the **Internet Archive (archive.org)**. This ensures stable, long-term preservation and access to the software.
 
