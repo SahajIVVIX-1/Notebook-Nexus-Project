@@ -15,10 +15,13 @@ from PyQt6.QtWidgets import (
     QMessageBox, QStyle, QFrame, QTextEdit, QDialog, QListWidgetItem,
     QDialogButtonBox
 )
-from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QPoint, pyqtSlot, QSettings
+from PyQt6.QtCore import (Qt, QTimer, QThread, pyqtSignal, QPoint, pyqtSlot, QSettings, 
+                          QPropertyAnimation, QEasingCurve)
 from PyQt6.QtGui import QFont, QIcon, QGuiApplication, QAction
 
+# --- Global Exception Handler ---
 def global_exception_hook(exctype, value, tb):
+    """Catches unhandled exceptions, logs them, and shows a critical error dialog."""
     error_message = f"An unexpected error occurred:\n\n{value}"
     traceback_details = "".join(traceback.format_tb(tb))
     try:
@@ -27,12 +30,15 @@ def global_exception_hook(exctype, value, tb):
             f.write(f"{error_message}\n")
             f.write(f"{traceback_details}\n\n")
     except Exception as e:
-        print(f"Error logging failed: {e}")
+        # If logging fails, print to console as a last resort
+        print(f"CRITICAL: Error logging failed: {e}")
 
+    # Display a user-friendly error dialog
     error_box = QMessageBox()
     error_box.setIcon(QMessageBox.Icon.Critical)
     error_box.setWindowTitle("Unhandled Application Error")
-    error_box.setText(error_message)
+    error_box.setText("A critical error occurred and the application must close.")
+    error_box.setInformativeText("Details have been saved to error_log.txt.")
     error_box.setDetailedText(traceback_details)
     error_box.setStandardButtons(QMessageBox.StandardButton.Ok)
     error_box.exec()
@@ -40,8 +46,13 @@ def global_exception_hook(exctype, value, tb):
     sys.__excepthook__(exctype, value, tb)
     sys.exit(1)
 
+# --- Worker Thread for Running Commands ---
 class CommandThread(QThread):
-    finished = pyqtSignal(bool, str)
+    """
+    Executes shell commands in a separate thread to avoid blocking the UI.
+    Emits signals for output, completion, and process start.
+    """
+    finished = pyqtSignal(bool, str, str)  # success, message, command_output
     process_started = pyqtSignal()
     output_received = pyqtSignal(str)
 
@@ -52,82 +63,138 @@ class CommandThread(QThread):
         self.command_type = command_type
         self.kwargs = kwargs
         self.process = None
+        self._is_running = True
 
     def run(self):
+        """Main logic for constructing and executing the command."""
+        command_output = ""
         try:
-            cmd_list = []
-            shell = False
+            # Determine the correct command list and execution method
+            full_cmd, shell = self._build_command()
             
-            if sys.platform == "win32":
-                full_cmd_prefix = f'cmd.exe /c "cd /d "{self.base_path}" && '
-            else:
-                self.finished.emit(False, "Unix-like OS execution is not yet implemented.")
+            if not full_cmd:
+                # This case is for commands that open a new terminal (e.g., 'activate')
+                # The process is launched externally, so we just report success.
+                self.finished.emit(True, "Process launched in new terminal.", "")
                 return
 
-            if self.command_type == "create_venv":
-                new_env_name = self.kwargs.get("new_env_name")
-                cmd_list = [ 'python', '-m', 'venv', new_env_name]
-                full_cmd = full_cmd_prefix + ' '.join(cmd_list) + '"'
-                shell = True
-            elif self.command_type == "get_env_details":
-                 cmd_list = [ 'python', '--version' ]
-                 full_cmd = self._get_activated_command(cmd_list)
-                 shell = True
-            elif self.command_type == "freeze":
-                cmd_list = [ 'pip', 'freeze' ]
-                full_cmd = self._get_activated_command(cmd_list)
-                shell = True
+            # Start the subprocess
+            self.process = subprocess.Popen(
+                full_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, # Capture stderr separately
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                creationflags=subprocess.CREATE_NO_WINDOW if shell else 0,
+                shell=shell
+            )
+            self.process_started.emit()
+
+            # Read stdout line by line
+            for line in iter(self.process.stdout.readline, ''):
+                if not self._is_running:
+                    break
+                stripped_line = line.strip()
+                self.output_received.emit(stripped_line)
+                command_output += stripped_line + "\n"
+            
+            self.process.stdout.close()
+            
+            # Capture any remaining error output
+            stderr_output = self.process.stderr.read().strip()
+            if stderr_output:
+                self.output_received.emit(f"ERROR: {stderr_output}")
+
+            return_code = self.process.wait()
+
+            if not self._is_running:
+                 self.finished.emit(False, f"Command '{self.command_type}' was terminated.", "")
+            elif return_code == 0:
+                self.finished.emit(True, f"Command '{self.command_type}' completed successfully.", command_output)
             else:
-                if not self.selected_env:
-                     raise ValueError("An environment must be selected.")
-                
-                cmd_list = None
-                if self.command_type == "launch":
-                    tool = self.kwargs.get("tool", "jupyter notebook")
-                    cmd_list = tool.split()
-                elif self.command_type == "install_requirements":
-                    req_path = self.kwargs.get("requirements_path")
-                    cmd_list = ['pip', 'install', '-r', f'"{req_path}"']
-                elif self.command_type == "activate":
-                    cmd_list = []
-                
-                if cmd_list is None:
-                    self.finished.emit(False, f"Unsupported command type: {self.command_type}")
-                    return
-
-                full_cmd = self._get_activated_command(cmd_list, new_console=True)
-                shell=True
-
-            if full_cmd:    
-                self.process = subprocess.Popen(
-                    full_cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    creationflags=subprocess.CREATE_NO_WINDOW if shell else 0,
-                    shell=shell
-                )
-                self.process_started.emit()
-
-                for line in iter(self.process.stdout.readline, ''):
-                    self.output_received.emit(line.strip())
-                self.process.stdout.close()
-                return_code = self.process.wait()
-
-                if return_code == 0:
-                    self.finished.emit(True, f"Command '{self.command_type}' completed successfully.")
-                else:
-                    self.finished.emit(False, f"Command '{self.command_type}' failed with exit code {return_code}.")
-            else:
-                self.finished.emit(True, "Process launched in new terminal.")
-
+                error_msg = f"Command '{self.command_type}' failed with exit code {return_code}."
+                if stderr_output:
+                     error_msg += f"\nDetails: {stderr_output}"
+                self.finished.emit(False, error_msg, stderr_output)
 
         except FileNotFoundError as e:
-            self.finished.emit(False, f"Error: A required file was not found. {str(e)}")
+            self.finished.emit(False, f"Error: A required file was not found. {str(e)}", "")
         except Exception as e:
-            self.finished.emit(False, f"An unexpected error occurred: {str(e)}")
+            self.finished.emit(False, f"An unexpected error occurred: {str(e)}", "")
+        finally:
+            self.process = None
+    
+    def _build_command(self):
+        """Constructs the final command string or list."""
+        cmd_list = []
+        shell = False
+        
+        # Define command prefix for Windows
+        if sys.platform == "win32":
+            # Using cmd.exe /c "cd ... && command" ensures the command runs in the correct directory.
+            full_cmd_prefix = f'cmd.exe /c "cd /d "{self.base_path}" && '
+        else:
+            # Placeholder for future Unix-like OS support
+            self.finished.emit(False, "Unix-like OS execution is not yet implemented.", "")
+            return None, False
+
+        # --- Command routing ---
+        if self.command_type == "create_venv":
+            new_env_name = self.kwargs.get("new_env_name")
+            cmd_list = ['python', '-m', 'venv', new_env_name]
+            full_cmd = full_cmd_prefix + ' '.join(cmd_list) + '"'
+            shell = True
+        
+        elif self.command_type in ["get_env_details", "freeze", "pip_list"]:
+            cmd_map = {
+                "get_env_details": ['python', '--version'],
+                "freeze": ['pip', 'freeze'],
+                "pip_list": ['pip', 'list', '--format=json']
+            }
+            cmd_list = cmd_map[self.command_type]
+            full_cmd = self._get_activated_command(cmd_list)
+            shell = True
+            
+        else:
+            # These commands require an environment to be selected
+            if not self.selected_env:
+                 raise ValueError("An environment must be selected for this action.")
+            
+            cmd_list = None
+            if self.command_type == "launch":
+                tool = self.kwargs.get("tool", "jupyter notebook")
+                cmd_list = tool.split()
+            elif self.command_type == "install_requirements":
+                req_path = self.kwargs.get("requirements_path")
+                if req_path.endswith(".json"):
+                     # Special handling for our packages.json
+                     with open(req_path, 'r') as f:
+                         data = json.load(f)
+                     packages = " ".join(data.get("packages", []))
+                     if not packages: raise ValueError("JSON file contains no packages to install.")
+                     cmd_list = ['pip', 'install'] + packages.split()
+                else:
+                     # Standard requirements.txt
+                     cmd_list = ['pip', 'install', '-r', f'"{req_path}"']
+            elif self.command_type == "activate":
+                cmd_list = [] # No command, just activate in new terminal
+            
+            if cmd_list is None:
+                self.finished.emit(False, f"Unsupported command type: {self.command_type}", "")
+                return None, False
+
+            # This command needs to open a new, interactive terminal
+            full_cmd = self._get_activated_command(cmd_list, new_console=True)
+            shell = True
+            return full_cmd, shell # Return immediately as Popen is handled differently
+
+        return full_cmd, shell
 
     def _get_activated_command(self, cmd_list, new_console=False):
+        """
+        Creates the full command string for running within an activated virtual environment.
+        """
         script_folder = "Scripts" if sys.platform == "win32" else "bin"
         activate_script_path = os.path.join(self.base_path, self.selected_env, script_folder, "activate.bat")
         
@@ -135,41 +202,74 @@ class CommandThread(QThread):
             raise FileNotFoundError(f"Activation script not found: {activate_script_path}")
         
         command_str = ' '.join(cmd_list)
-        
         base_path_norm = os.path.normpath(self.base_path)
         activate_script_norm = os.path.normpath(activate_script_path)
 
         if new_console:
-            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.bat', newline='\r\n') as bat_file:
-                temp_bat_path = bat_file.name
-                bat_file.write('@echo off\n')
-                bat_file.write(f'cd /d "{base_path_norm}"\n')
-                bat_file.write(f'call "{activate_script_norm}"\n')
+            # Use a temporary batch file to activate the environment and then run the command in a new console.
+            # This is the most reliable way to provide an interactive, activated shell.
+            temp_bat_file = None
+            try:
+                temp_bat_file = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.bat', newline='\r\n')
+                temp_bat_path = temp_bat_file.name
+                
+                # Write commands to the temporary batch file
+                temp_bat_file.write('@echo off\n')
+                temp_bat_file.write(f'title PyEnv Launcher - {self.selected_env}\n') # Set a useful title
+                temp_bat_file.write(f'cd /d "{base_path_norm}"\n')
+                temp_bat_file.write(f'call "{activate_script_norm}"\n')
+                
                 if command_str:
-                    bat_file.write(f'{command_str}\n')
-                if not command_str:
-                     bat_file.write('echo.\n')
-                     bat_file.write('echo Environment is now active in this terminal.\n')
+                    temp_bat_file.write(f'@echo Running: {command_str}\n')
+                    temp_bat_file.write(f'{command_str}\n')
+                else: # 'activate' command just opens the shell
+                     temp_bat_file.write('echo.\n')
+                     temp_bat_file.write('echo Environment is now active in this terminal.\n')
+                     
+                temp_bat_file.close() # Close the file to ensure it's written
 
-            full_cmd = f'start "PyEnv Launcher - {self.selected_env}" cmd.exe /k "{temp_bat_path}"'
+                # Launch the batch file in a new terminal window that stays open (/k)
+                subprocess.Popen(f'start "PyEnv Launcher" cmd.exe /k "{temp_bat_path}"', shell=True)
+                
+                # Schedule the temp file for deletion
+                QTimer.singleShot(5000, lambda: os.remove(temp_bat_path))
+                
+                return None # Signal that the process is external
             
-            QTimer.singleShot(10000, lambda: os.remove(temp_bat_path))
-            
-            return full_cmd
-            
+            except Exception as e:
+                raise IOError(f"Failed to create temporary script: {e}")
+
         else:
-            commands_to_run = f'cd /d "{base_path_norm}" && call "{activate_script_norm}" && {command_str}'
+            # For non-interactive commands, chain everything with '&&'
+            commands_to_run = f'call "{activate_script_norm}" && {command_str}'
             return f'cmd.exe /c "{commands_to_run}"'
 
+    def stop_process(self):
+        """Stops the running command thread and terminates its subprocess."""
+        self._is_running = False
+        if self.process and self.process.poll() is None:
+            try:
+                self.process.terminate() # Try to terminate gracefully
+                self.process.wait(timeout=2) # Wait a bit
+            except Exception as e:
+                self.output_received.emit(f"Forcing process to kill: {e}")
+                self.process.kill() # Force kill if terminate fails
+
+
+# --- File System Watcher ---
 class FileChangeHandler(FileSystemEventHandler):
+    """Fires a callback when the watched directory content changes."""
     def __init__(self, callback):
         super().__init__()
         self.callback = callback
 
     def on_any_event(self, event):
+        # Trigger on creation, deletion, or movement of files/folders
         if event.event_type in ['created', 'deleted', 'moved']:
             self.callback()
 
+
+# --- Dialogs ---
 class AboutDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -192,15 +292,25 @@ class AboutDialog(QDialog):
         separator.setFrameShape(QFrame.Shape.HLine)
         separator.setFrameShadow(QFrame.Shadow.Sunken)
 
-        terms_label = QLabel("<b>Terms and Conditions:</b>")
+        terms_label = QLabel("<b>Terms and Conditions (MIT License):</b>")
         terms_text = QTextEdit()
         terms_text.setReadOnly(True)
         terms_text.setText(
-            "This software is provided 'as-is', without any express or implied warranty. In no event will the authors be held liable for any damages arising from the use of this software.\n\n"
-            "Permission is granted to anyone to use this software for any purpose, including commercial applications, and to alter it and redistribute it freely, subject to the following restrictions:\n\n"
-            "1. The origin of this software must not be misrepresented; you must not claim that you wrote the original software. If you use this software in a product, an acknowledgment in the product documentation would be appreciated but is not required.\n"
-            "2. Altered source versions must be plainly marked as such, and must not be misrepresented as being the original software.\n"
-            "3. This notice may not be removed or altered from any source distribution."
+             "Permission is hereby granted, free of charge, to any person obtaining a copy "
+            "of this software and associated documentation files (the \"Software\"), to deal "
+            "in the Software without restriction, including without limitation the rights "
+            "to use, copy, modify, merge, publish, distribute, sublicense, and/or sell "
+            "copies of the Software, and to permit persons to whom the Software is "
+            "furnished to do so, subject to the following conditions:\n\n"
+            "The above copyright notice and this permission notice shall be included in all "
+            "copies or substantial portions of the Software.\n\n"
+            "THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR "
+            "IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, "
+            "FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE "
+            "AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER "
+            "LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, "
+            "OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE "
+            "SOFTWARE."
         )
         terms_text.setFixedHeight(200)
 
@@ -277,7 +387,9 @@ class SettingsDialog(QDialog):
         self.settings.setValue("default_path", self.default_path_input.text())
         super().accept()
 
+# --- Main Application Window ---
 class JupyterLauncher(QWidget):
+    # Theme definitions
     DARK_THEME = {
         "background": "#0d1117", "primary": "#161b22", "border": "#30363d",
         "text": "#c9d1d9", "text_header": "#f0f6fc", "text_secondary": "#8b949e",
@@ -295,24 +407,59 @@ class JupyterLauncher(QWidget):
         self.settings = QSettings("ChakhdiLocal", "PyEnvLauncher")
         self.current_theme = self.DARK_THEME if self.settings.value("theme", "Dark") == "Dark" else self.LIGHT_THEME
         
+        # --- Window Setup ---
         self.setWindowTitle("PyEnv Launcher")
         self.setObjectName("JupyterLauncher")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.resize(600, 800)
 
+        # --- Instance Variables ---
         self.observer = None
         self.old_pos = None
         self.command_thread = None
 
+        # --- UI Initialization ---
         self._setup_main_layout()
         self._setup_ui_components()
         self._apply_stylesheet()
         self._connect_signals()
 
+        # --- Final Setup ---
         self._load_app_settings()
         self._update_file_observer()
         self.discover_virtual_environments()
+        self._setup_animations()
+    
+    def _setup_animations(self):
+        """Initializes the fade-in and fade-out animations for the window."""
+        # --- Fade-In Animation (Existing code) ---
+        self.fade_in_animation = QPropertyAnimation(self, b"windowOpacity", self)
+        self.fade_in_animation.setDuration(400)
+        self.fade_in_animation.setStartValue(0.0)
+        self.fade_in_animation.setEndValue(1.0)
+        self.fade_in_animation.setEasingCurve(QEasingCurve.Type.InOutQuad)
+
+        # --- Fade-Out Animation (New code) ---
+        self.fade_out_animation = QPropertyAnimation(self, b"windowOpacity", self)
+        self.fade_out_animation.setDuration(300) # A slightly faster close feels more responsive
+        self.fade_out_animation.setStartValue(1.0)
+        self.fade_out_animation.setEndValue(0.0)
+        self.fade_out_animation.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        
+        # IMPORTANT: When the fade-out is finished, call the real close method
+        self.fade_out_animation.finished.connect(self.close)
+        
+    def show_with_fade(self):
+        """Shows the window with a smooth fade-in effect."""
+        # Start with the window being completely transparent
+        self.setWindowOpacity(0.0)
+        
+        # Start the animation. The animation will make it fade to 1.0 (opaque)
+        self.fade_in_animation.start()
+        
+        # Show the window. It will be invisible at first and then fade in.
+        self.show()
 
     def _setup_main_layout(self):
         self.main_layout = QVBoxLayout(self)
@@ -464,10 +611,16 @@ class JupyterLauncher(QWidget):
 
         pkg_layout = QHBoxLayout()
         self.install_reqs_btn = QPushButton("Install from File")
-        self.install_reqs_btn.setToolTip("Install packages from a requirements.txt or similar file.")
+        self.install_reqs_btn.setToolTip("Install packages from a requirements.txt or packages.json file.")
+        
+        self.export_json_btn = QPushButton("Export to packages.json")
+        self.export_json_btn.setToolTip("Save primary packages to a packages.json file.")
+        
         self.freeze_btn = QPushButton("Freeze to requirements.txt")
         self.freeze_btn.setToolTip("Save all installed packages into a requirements.txt file.")
+        
         pkg_layout.addWidget(self.install_reqs_btn)
+        pkg_layout.addWidget(self.export_json_btn)
         pkg_layout.addWidget(self.freeze_btn)
         layout.addLayout(pkg_layout)
 
@@ -533,27 +686,37 @@ class JupyterLauncher(QWidget):
         footer_layout.addWidget(sizegrip)
         return footer_layout
 
+    # --- Signal Connections and Styling ---
     def _connect_signals(self):
+        # Title Bar
         self.about_btn.clicked.connect(self._open_about_dialog)
         self.settings_btn.clicked.connect(self._open_settings)
-        self.path_input.textChanged.connect(self._on_path_changed)
-        self.recent_paths_btn.clicked.connect(self._show_recent_paths_menu)
-        self.browse_btn.clicked.connect(self._browse_path)
-        self.open_btn.clicked.connect(self._open_in_explorer)
-        self.create_venv_btn.clicked.connect(self._create_environment)
-        self.venv_dropdown.currentTextChanged.connect(self._on_venv_selection_changed)
-        self.delete_venv_btn.clicked.connect(self._delete_environment)
-        self.install_reqs_btn.clicked.connect(self._install_requirements)
-        self.freeze_btn.clicked.connect(self._freeze_requirements)
-        self.activate_btn.clicked.connect(self._activate_environment)
-        self.launch_jupyter_btn.clicked.connect(self._launch_jupyter)
-        self.file_list.customContextMenuRequested.connect(self._show_file_context_menu)
-        self.clear_log_btn.clicked.connect(self.log_output.clear)
-        
         title_bar = self.container_layout.itemAt(0).widget()
         control_buttons = title_bar.findChildren(QPushButton)
         control_buttons[-1].clicked.connect(self.close)
         control_buttons[-2].clicked.connect(self.showMinimized)
+        
+        # Path Management
+        self.path_input.textChanged.connect(self._on_path_changed)
+        self.recent_paths_btn.clicked.connect(self._show_recent_paths_menu)
+        self.browse_btn.clicked.connect(self._browse_path)
+        self.open_btn.clicked.connect(self._open_in_explorer)
+        
+        # Venv Creation & Management
+        self.create_venv_btn.clicked.connect(self._create_environment)
+        self.venv_dropdown.currentTextChanged.connect(self._on_venv_selection_changed)
+        self.delete_venv_btn.clicked.connect(self._delete_environment)
+        
+        # Package & Launching
+        self.install_reqs_btn.clicked.connect(self._install_requirements)
+        self.freeze_btn.clicked.connect(self._freeze_requirements)
+        self.export_json_btn.clicked.connect(self._export_to_json)
+        self.activate_btn.clicked.connect(self._activate_environment)
+        self.launch_jupyter_btn.clicked.connect(self._launch_jupyter)
+        
+        # File List & Logs
+        self.file_list.customContextMenuRequested.connect(self._show_file_context_menu)
+        self.clear_log_btn.clicked.connect(self.log_output.clear)
 
     def _apply_stylesheet(self):
         c = self.current_theme
@@ -592,6 +755,7 @@ class JupyterLauncher(QWidget):
             QMenu::item:selected {{ background-color: {c['accent']}; }}
         """)
     
+    # --- Command Execution ---
     def _run_command(self, command_type, on_finish=None, **kwargs):
         if self.command_thread and self.command_thread.isRunning():
             self._update_status("A command is already running.", "error")
@@ -600,28 +764,36 @@ class JupyterLauncher(QWidget):
         base_path = self.path_input.text().strip()
         selected_env = self.venv_dropdown.currentText()
         if not os.path.isdir(base_path):
-             self._update_status("Invalid directory selected.", "error")
+             self._update_status("Invalid project directory selected.", "error")
              return
-        if command_type not in ["create_venv"] and ("found" in selected_env or "Invalid" in selected_env):
-            self._update_status("Invalid environment selected.", "error")
+        
+        # Check if environment is valid before proceeding
+        if command_type not in ["create_venv"] and ("found" in selected_env or not selected_env):
+            self._update_status("A valid environment must be selected.", "error")
             return
         
+        # Create and start the thread
         self.command_thread = CommandThread(base_path, selected_env, command_type, **kwargs)
         self.command_thread.output_received.connect(self._log_message)
         self.command_thread.process_started.connect(lambda: self._set_progress_bar_active(True))
-        self.command_thread.finished.connect(lambda s, m: self._on_command_finished(s, m, on_finish))
+        
+        # Connect the finished signal to handle results
+        self.command_thread.finished.connect(
+            lambda s, m, o: self._on_command_finished(s, m, o, on_finish)
+        )
         
         self.command_thread.start()
         self._log_message(f"Starting command: {command_type}...")
 
-    def _on_command_finished(self, success, message, on_finish_callback):
+    def _on_command_finished(self, success, message, command_output, on_finish_callback):
         self._set_progress_bar_active(False)
         self._update_status(message, "success" if success else "error")
         self._log_message(f"Finished: {message}")
         if success and on_finish_callback:
-            on_finish_callback()
-        self.command_thread = None
+            # Pass the raw command output to the callback
+            on_finish_callback(command_output)
 
+    # --- UI Slots and Actions ---
     def _open_about_dialog(self):
         dialog = AboutDialog(self)
         dialog.exec()
@@ -632,7 +804,7 @@ class JupyterLauncher(QWidget):
             self.settings.sync()
             self.current_theme = self.DARK_THEME if self.settings.value("theme", "Dark") == "Dark" else self.LIGHT_THEME
             self._apply_stylesheet()
-            self._update_status("Settings saved.", "info")
+            self._update_status("Settings saved. Restart may be required for some changes.", "info")
 
     def _load_app_settings(self):
         self.current_theme = self.DARK_THEME if self.settings.value("theme", "Dark") == "Dark" else self.LIGHT_THEME
@@ -642,6 +814,7 @@ class JupyterLauncher(QWidget):
         self._add_to_recent_paths(self.path_input.text())
             
     def _on_path_changed(self):
+        """Debounces path changes to avoid excessive updates while typing."""
         if not hasattr(self, '_path_change_timer'):
             self._path_change_timer = QTimer()
             self._path_change_timer.setSingleShot(True)
@@ -649,6 +822,7 @@ class JupyterLauncher(QWidget):
         self._path_change_timer.start(500)
 
     def _update_path_resources(self):
+        """Updates UI elements that depend on the selected project path."""
         path = self.path_input.text().strip()
         if os.path.isdir(path):
             self.discover_virtual_environments()
@@ -692,12 +866,12 @@ class JupyterLauncher(QWidget):
         base_path = self.path_input.text().strip()
         new_env_name = self.new_venv_name_input.text().strip()
         if not new_env_name or ' ' in new_env_name:
-            self._update_status("Provide a valid name with no spaces.", "error")
+            self._update_status("Provide a valid environment name with no spaces.", "error")
             return
         if os.path.exists(os.path.join(base_path, new_env_name)):
-            self._update_status(f"'{new_env_name}' already exists.", "error")
+            self._update_status(f"Directory '{new_env_name}' already exists.", "error")
             return
-        self._run_command("create_venv", new_env_name=new_env_name, on_finish=self.discover_virtual_environments)
+        self._run_command("create_venv", new_env_name=new_env_name, on_finish=lambda _: self.discover_virtual_environments())
         self.new_venv_name_input.clear()
 
     def _delete_environment(self):
@@ -705,16 +879,20 @@ class JupyterLauncher(QWidget):
         if not env_name or "found" in env_name: return
 
         reply = QMessageBox.question(self, 'Confirm Deletion', 
-            f"Are you sure you want to permanently delete the environment '{env_name}'?\nThis action cannot be undone.",
+            f"Are you sure you want to permanently delete the environment '{env_name}'?\n\nThis action cannot be undone.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
 
         if reply == QMessageBox.StandardButton.Yes:
             env_path = os.path.join(self.path_input.text().strip(), env_name)
             self._log_message(f"Attempting to delete {env_path}...")
-            shutil.rmtree(env_path, ignore_errors=True)
-            QTimer.singleShot(500, self.discover_virtual_environments)
-            self._update_status(f"Environment '{env_name}' deleted.", "success")
-            self._log_message(f"Successfully deleted environment '{env_name}'.")
+            try:
+                shutil.rmtree(env_path)
+                QTimer.singleShot(250, self.discover_virtual_environments) # Give OS time to update
+                self._update_status(f"Environment '{env_name}' deleted.", "success")
+                self._log_message(f"Successfully deleted environment '{env_name}'.")
+            except Exception as e:
+                self._update_status(f"Error deleting environment: {e}", "error")
+                self._log_message(f"Failed to delete {env_path}: {e}")
 
     def _on_venv_selection_changed(self, env_name):
         if not env_name or "found" in env_name:
@@ -724,41 +902,90 @@ class JupyterLauncher(QWidget):
         self.env_details_label.setText("Fetching details...")
         self._run_command("get_env_details", on_finish=self._update_env_details)
         
-    def _update_env_details(self):
+    def _update_env_details(self, python_version_output):
         env_name = self.venv_dropdown.currentText()
+        if not env_name or "found" in env_name: return
+
         env_path = os.path.join(self.path_input.text().strip(), env_name)
+        py_version = python_version_output.strip() if python_version_output else "Unknown"
         
-        last_line = self.log_output.toPlainText().strip().split('\n')[-1]
-        py_version = "Unknown"
-        if "Python" in last_line:
-            py_version = last_line
-            
-        creation_date = time.ctime(os.path.getctime(env_path))
-        self.env_details_label.setText(f"Path: {env_path} | Version: {py_version} | Created: {creation_date}")
-        self.env_details_label.setToolTip(self.env_details_label.text())
+        try:
+            creation_date = time.ctime(os.path.getctime(env_path))
+            details = f"Version: {py_version} | Created: {creation_date}"
+            self.env_details_label.setText(details)
+            self.env_details_label.setToolTip(f"Path: {env_path}\n{details}")
+        except FileNotFoundError:
+             self.env_details_label.setText("Environment details not available.")
+
 
     def _install_requirements(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Select Requirements File", self.path_input.text(), "Text Files (*.txt)")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Requirements File", self.path_input.text(), "Package Files (*.txt *.json)"
+        )
         if path:
             self._run_command("install_requirements", requirements_path=path)
 
     def _freeze_requirements(self):
+        """Runs 'pip freeze' and saves the output to requirements.txt."""
         self._run_command("freeze", on_finish=self._save_freeze_output)
 
-    def _save_freeze_output(self):
-        output = []
-        for line in self.log_output.toPlainText().strip().split('\n'):
-             if "pip freeze" in line or "Starting command" in line or "Finished" in line:
-                 continue
-             output.append(line)
+    def _save_freeze_output(self, freeze_output):
+        """Callback to save the raw output from the freeze command."""
+        if not freeze_output:
+            self._update_status("Freeze command produced no output.", "error")
+            return
         
         try:
-            with open(os.path.join(self.path_input.text().strip(), "requirements.txt"), "w") as f:
-                f.write("\n".join(output))
+            req_path = os.path.join(self.path_input.text().strip(), "requirements.txt")
+            with open(req_path, "w") as f:
+                f.write(freeze_output.strip())
             self._update_status("requirements.txt generated successfully.", "success")
-            self.discover_virtual_environments()
+            self.discover_virtual_environments() # Refresh file list
         except Exception as e:
             self._update_status(f"Failed to write requirements.txt: {e}", "error")
+
+    def _export_to_json(self):
+        """Exports top-level packages to packages.json."""
+        self._run_command("pip_list", on_finish=self._save_json_output)
+        
+    def _save_json_output(self, pip_list_output):
+        """Parses 'pip list --format=json' to create a simple package file."""
+        if not pip_list_output:
+            self._update_status("Could not get package list.", "error")
+            return
+
+        try:
+            # The output may have multiple JSON objects or other text, find the first valid one
+            json_start = pip_list_output.find('[')
+            json_end = pip_list_output.rfind(']') + 1
+            if json_start == -1:
+                 raise json.JSONDecodeError("No JSON array found in pip output.", pip_list_output, 0)
+                 
+            packages_data = json.loads(pip_list_output[json_start:json_end])
+            
+            # Filter out editable packages (like -e .) and pip/setuptools themselves
+            editable_filter = ['pip', 'setuptools', 'wheel']
+            top_level_packages = [
+                pkg['name'] for pkg in packages_data 
+                if pkg['name'] not in editable_filter
+            ]
+
+            json_content = {
+                "comment": "Managed by PyEnv Launcher. Contains top-level packages for this project.",
+                "packages": sorted(top_level_packages)
+            }
+            
+            json_path = os.path.join(self.path_input.text().strip(), "packages.json")
+            with open(json_path, "w") as f:
+                json.dump(json_content, f, indent=4)
+                
+            self._update_status("packages.json exported successfully.", "success")
+            self.discover_virtual_environments()
+        except json.JSONDecodeError as e:
+             self._update_status(f"Failed to parse package list: {e}", "error")
+             self._log_message(f"ERROR: Could not decode JSON from pip output: {pip_list_output}")
+        except Exception as e:
+            self._update_status(f"Failed to write packages.json: {e}", "error")
 
     def _activate_environment(self):
         self._run_command("activate")
@@ -796,21 +1023,28 @@ class JupyterLauncher(QWidget):
                 except Exception as e:
                     self._update_status(f"Error deleting: {e}", "error")
 
+    # --- Utility and Helper Methods ---
     def discover_virtual_environments(self):
+        """Scans the project directory for venvs and updates the UI."""
         base_path = self.path_input.text().strip()
         self.file_list.clear()
 
+        # Define all widgets that depend on a valid path or environment
         all_widgets = [self.open_btn, self.new_venv_name_input, self.create_venv_btn, self.venv_dropdown,
-                       self.delete_venv_btn, self.install_reqs_btn, self.freeze_btn, self.activate_btn, self.launch_jupyter_btn]
-        env_dependent_widgets = [self.venv_dropdown, self.delete_venv_btn, self.install_reqs_btn, self.freeze_btn,
-                                 self.activate_btn, self.launch_jupyter_btn]
+                       self.delete_venv_btn, self.install_reqs_btn, self.freeze_btn, self.export_json_btn,
+                       self.activate_btn, self.launch_jupyter_btn]
+        env_dependent_widgets = [self.delete_venv_btn, self.install_reqs_btn, self.freeze_btn,
+                                 self.export_json_btn, self.activate_btn, self.launch_jupyter_btn]
 
         if not os.path.isdir(base_path):
             for widget in all_widgets: widget.setEnabled(False)
             return
 
-        for widget in all_widgets: widget.setEnabled(True)
+        # Enable base widgets, env-dependent ones will be handled later
+        for widget in [self.open_btn, self.new_venv_name_input, self.create_venv_btn, self.venv_dropdown]:
+            widget.setEnabled(True)
         
+        # Populate file list
         try:
             dir_contents = sorted(os.listdir(base_path))
             for name in dir_contents:
@@ -822,6 +1056,7 @@ class JupyterLauncher(QWidget):
             self._update_status("Permission denied to read directory.", "error")
             return
 
+        # Discover virtual environments
         script_folder = "Scripts" if sys.platform == "win32" else "bin"
         venvs = [d for d in dir_contents if os.path.isdir(os.path.join(base_path, d)) and
                  os.path.exists(os.path.join(base_path, d, script_folder, "activate"))]
@@ -831,45 +1066,59 @@ class JupyterLauncher(QWidget):
 
         if not venvs:
             self.venv_dropdown.addItem("No environments found")
+            self.venv_dropdown.setEnabled(False)
             for widget in env_dependent_widgets: widget.setEnabled(False)
         else:
+            self.venv_dropdown.setEnabled(True)
             self.venv_dropdown.addItems(sorted(venvs))
             if current_selection in venvs: self.venv_dropdown.setCurrentText(current_selection)
             for widget in env_dependent_widgets: widget.setEnabled(True)
         
     def _update_file_observer(self):
+        """Restarts the file system observer on the current path."""
         if self.observer:
             self.observer.stop()
             self.observer.join()
         path = self.path_input.text().strip()
         if os.path.isdir(path):
             self.observer = Observer()
+            # Watch for changes and call discover_virtual_environments
             self.observer.schedule(FileChangeHandler(self.discover_virtual_environments), path, recursive=False)
             self.observer.start()
 
     def _update_status(self, message, msg_type):
+        """Updates the status bar with a colored message that fades."""
         self.status_label.setText(message)
         c = self.current_theme
         color_map = {"success": c['success'], "error": c['error'], "info": c['accent']}
-        bg_color = color_map.get(msg_type, "transparent")
+        # Use a more subtle background for info messages
+        bg_color = color_map.get(msg_type, "transparent") if msg_type != "info" else c['border']
+        
         self.status_label.setStyleSheet(f"background-color: {bg_color}; color: white; border-radius: 4px; padding: 4px;")
+        
+        # Reset the style after 5 seconds
         if msg_type in ["success", "error", "info"]:
             QTimer.singleShot(5000, lambda: self.status_label.setStyleSheet(f"background: transparent; color: {c['text']};"))
 
     def _log_message(self, message):
+        """Appends a timestamped message to the log view."""
         self.log_output.append(f"[{time.strftime('%H:%M:%S')}] {message}")
         self.log_output.verticalScrollBar().setValue(self.log_output.verticalScrollBar().maximum())
 
     def _set_progress_bar_active(self, is_active):
+        """Controls the visibility and state of the progress bar and indicator."""
         self.progress_bar.setVisible(is_active)
         self.running_indicator.setVisible(is_active)
-        if is_active: self.progress_bar.setRange(0, 0)
-        else: self.progress_bar.setRange(0, 100)
+        if is_active:
+            self.progress_bar.setRange(0, 0) # Indeterminate mode
+        else:
+            self.progress_bar.setRange(0, 100)
 
+    # --- Window Movement and Closing ---
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             title_bar_widget = self.container_layout.itemAt(0).widget()
-            if title_bar_widget and title_bar_widget.rect().contains(event.pos()):
+            if title_bar_widget and title_bar_widget.geometry().contains(event.pos()):
                 self.old_pos = event.globalPosition().toPoint()
 
     def mouseMoveEvent(self, event):
@@ -882,17 +1131,38 @@ class JupyterLauncher(QWidget):
         self.old_pos = None
 
     def closeEvent(self, event):
+        """
+        Overrides the default close event to perform a fade-out animation.
+        """
+        # Check if we are already in the process of closing to prevent a loop
+        if hasattr(self, '_is_closing') and self._is_closing:
+            # If we are, it means the animation finished and called self.close() again.
+            # We let the event proceed to close the application for real.
+            super().closeEvent(event)
+            return
+
+        # --- 1. Perform all necessary cleanup FIRST ---
         if self.observer:
             self.observer.stop()
             self.observer.join()
-        if self.command_thread:
-            self.command_thread.stop()
-        event.accept()
+        if self.command_thread and self.command_thread.isRunning():
+            self.command_thread.stop_process()
+            self.command_thread.wait()
 
+        # --- 2. Start the fade-out process ---
+        self._is_closing = True # Set a flag to indicate we've started closing
+        event.ignore() # IMPORTANT: Ignore the original close event
+        self.fade_out_animation.start() # Start our fade-out animation
+
+# --- Application Entry Point ---
 if __name__ == "__main__":
+    # Set the global exception hook to catch all unhandled errors
     sys.excepthook = global_exception_hook
+    
     app = QApplication(sys.argv)
     app.setFont(QFont(JupyterLauncher.FONT_MAIN, 9))
+    
     window = JupyterLauncher()
-    window.show()
+    window.show_with_fade()
+    
     sys.exit(app.exec())
