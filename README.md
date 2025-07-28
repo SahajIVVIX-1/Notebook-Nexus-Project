@@ -1,5 +1,3 @@
-Of course. Here is a comprehensive and professional README.md file for your PyEnv Launcher software, suitable for a GitHub repository.
-
 PyEnv Launcher 📘
 <!-- It's highly recommended to replace this with an actual screenshot of your application -->
 
